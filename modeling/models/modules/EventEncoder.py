@@ -35,20 +35,23 @@ class EventEncoder(nn.Module):
             nn.Linear( embedding_size * len( d_categories) * 10, d_model )
         )
 
-    def forward(
-        self,
-        events
-    ) -> torch.Tensor:
+    def forward(self, events) -> torch.Tensor:
         """
         Args:
-            events: [batch_size, seq_len, d_categories]
-                Note: This should be constant for values we "know". Some values will not be known; like masking in bert.
-
+            events: [batch_size, seq_len] or [batch_size, seq_len, d_categories]
         """
-        output_tensors = []
-        for i, category in enumerate( self.categories ):
-            output_tensors.append( self.category_embedding( events[ :, :, i ] ) )
-        embedded_categories = torch.cat( output_tensors, dim = 2 )
-        embedded_events = self.down_projection( embedded_categories )
+        # Check dimensions of input
+        if events.dim() == 2:
+            # Handle 2D input - assuming it's a single category
+            embedded_events = self.category_embedding(events)
+            # No need for down_projection since we only have one category
+            return self.pe(embedded_events)
 
-        return self.pe( embedded_events )
+        # Original code for 3D input
+        output_tensors = []
+        for i, category in enumerate(self.categories):
+            output_tensors.append(self.category_embedding(events[:, :, i]))
+        embedded_categories = torch.cat(output_tensors, dim=2)
+        embedded_events = self.down_projection(embedded_categories)
+
+        return self.pe(embedded_events)

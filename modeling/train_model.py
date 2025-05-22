@@ -25,6 +25,8 @@ def load_config(config_path = f'{base_path}/training_config.json' ):
         config = json.load(f)
     return config
 
+def simple_collate(x):
+    return x[0]
 
 def main():
     config = load_config()
@@ -34,7 +36,8 @@ def main():
         src_seq_length = config[ 'src_seq_len' ],
         tgt_seq_length = config[ 'tgt_seq_len' ],
         id_category_size = config['id_category_size'],
-        input_size=config['d_model']
+        input_size=config['model']['d_model'],
+        output_size=config['id_category_size'],
     )
     print( full_dataset.category_fields.values() )
     output_names = full_dataset.category_fields.keys()
@@ -61,14 +64,17 @@ def main():
         )
         start_epoch = model_loaded['epoch']
 
-    model_g = model_g.to( 'cuda', dtype = torch.bfloat16 )
+    #model_g = model_g.to( 'cuda', dtype = torch.bfloat16 )
+    device = torch.device('cpu')
+    model_g = model_g.to(device)
+
     optimizer_g = torch.optim.Adam(
         model_g.parameters(),
         lr = 3e-4
     )
 
     model_g.train()
-    full_dataset.load_dataset()
+    #full_dataset.load_dataset()
     training_data, test_data = torch.utils.data.random_split( full_dataset, [ 0.9, 0.1 ] )
     train_dataloader = DataLoader(
         full_dataset,
@@ -77,7 +83,7 @@ def main():
         shuffle = False,
         persistent_workers = True,
         pin_memory = True,
-        collate_fn = lambda x: x[ 0 ]
+        collate_fn=simple_collate
     )
     test_dataloader = DataLoader(
         test_data,
@@ -86,11 +92,11 @@ def main():
         shuffle = False,
         persistent_workers = True,
         pin_memory = True,
-        collate_fn = lambda x: x[ 0 ]
+        collate_fn=simple_collate
     )
 
     current_datetime = datetime.now()
-    run_directory = f'/runs/{current_datetime.strftime("%Y-%m-%d")}/{current_datetime.strftime("%H:%M")}'
+    run_directory = f'/runs/{current_datetime.strftime("%Y-%m-%d")}/{current_datetime.strftime("%H_%M")}'
     test_writer = SummaryWriter( log_dir = f'{run_directory}/test' )
     train_writer = SummaryWriter( log_dir = f'{run_directory}/train' )
     train(

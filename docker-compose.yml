@@ -24,13 +24,13 @@ services:
 #      CUDA_LAUNCH_BLOCKING: 1
     volumes:
       - training_runs:/runs
-    deploy:
-      resources:
-        reservations:
-          devices:
-            -   driver: nvidia
-                count: 1
-                capabilities: [ gpu ]
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            -   driver: nvidia
+#                count: 1
+#                capabilities: [ gpu ]
 
 volumes:
   training_runs:

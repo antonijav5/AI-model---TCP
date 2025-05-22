@@ -17,6 +17,8 @@ class EventsLoader( Dataset ):
         self.batch_size = batch_size
         self.src_sequence_length = src_seq_length
         self.tgt_sequence_length = tgt_seq_length
+        self.input_size = input_size
+        self.output_size = output_size
 
         self.encoder_streams = [
             'EventType',          # 5 * 1000
@@ -81,18 +83,18 @@ class EventsLoader( Dataset ):
             src_streams.append(
                 {
                     'EventType': [
-                        torch.tensor( self.dataset[ self.punch_in_indices, : ] ),
-                        torch.tensor( self.dataset[ self.punch_out_indices, : ] )
+                        self.dataset[self.punch_in_indices, :].detach().clone(),
+                        self.dataset[self.punch_out_indices, :].detach().clone()
                     ],
                     'RecipientRecordId': [
-                        torch.tensor( self.dataset[ self.recipient_1_indices, : ] ),
-                        torch.tensor( self.dataset[ self.recipient_2_indices, : ] )
+                        self.dataset[self.recipient_1_indices, :].detach().clone(),
+                        self.dataset[self.recipient_2_indices, :].detach().clone()
                     ]
                 }
             )
             tgt_tensors.append( self.tgt_dataset )
             masks.append(
-                [ torch.zeros( (self.category_fields[ category ]) for category in self.category_fields.keys() ) ]
+                [ torch.zeros(self.category_fields[category]) for category in self.category_fields ]
             )
 
         return (
