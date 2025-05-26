@@ -76,14 +76,11 @@ class Model(nn.Module):
             if event_stream_name in self.encoders_dict:
                 encoder = self.encoders_dict[event_stream_name]
                 for event_stream in event_streams:
-                    # Embed the events
                     embedded_events = self.event_embedder(event_stream)
-                    # Pass through the transformer encoder
                     encoded_stream = encoder(embedded_events)
-                    # Only keep the last 'encodings_to_carry' tokens from each stream
-                    if encodings_to_carry > 0 and encoded_stream.shape[1] > encodings_to_carry:
-                        encoded_stream = encoded_stream[:, -encodings_to_carry:, :]
-                    event_stream_encodings.append(encoded_stream)
+                    last_vector = encoded_stream[:, -1:, :]
+
+                    event_stream_encodings.append(last_vector)
 
         event_stream_encodings = torch.cat(event_stream_encodings, dim=0)
         event_stream_encodings = event_stream_encodings.reshape((1, -1, event_stream_encodings.shape[2]))

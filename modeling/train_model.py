@@ -68,30 +68,34 @@ def main():
     device = torch.device('cpu')
     model_g = model_g.to(device)
 
+    # Better convergence
     optimizer_g = torch.optim.Adam(
         model_g.parameters(),
-        lr = 3e-4
+        lr=1e-4  # Instead of 3e-4
     )
 
     model_g.train()
     #full_dataset.load_dataset()
     training_data, test_data = torch.utils.data.random_split( full_dataset, [ 0.9, 0.1 ] )
+    torch.set_default_dtype(torch.float32)  # Instead of torch.bfloat16
+
     train_dataloader = DataLoader(
         full_dataset,
-        num_workers = 24,
-        batch_size = 1,
-        shuffle = False,
-        persistent_workers = True,
-        pin_memory = True,
+        num_workers=0,  # Instead of 12
+        batch_size=1,
+        shuffle=False,
+        persistent_workers=False,  # Instead of True
+        pin_memory=False,
         collate_fn=simple_collate
     )
+
     test_dataloader = DataLoader(
         test_data,
-        num_workers = 8,
-        batch_size = 1,
-        shuffle = False,
-        persistent_workers = True,
-        pin_memory = True,
+        num_workers=0,  # Instead of 12
+        batch_size=1,
+        shuffle=False,
+        persistent_workers=False,  # Instead of True
+        pin_memory=False,
         collate_fn=simple_collate
     )
 
@@ -115,23 +119,114 @@ def main():
     )
 
 
-def train(
-    model_g,
-    optimizer_g,
-    train_writer,
-    test_writer,
-    train_dataloader,
-    test_dataloader,
-    start_epoch,
-    epochs,
-    grad_accum,
-    run_directory,
-    output_names,
-    batch_size
+def execute(
+        accum_iter,
+        epoch,
+        model_g: "ModelTrainer",
+        dataloader,
+        writer,
+        output_names,
+        batch_size,
+        optimizer_g=None,
+        train=False,
 ):
+    last_time = time.time()
+    total_steps = len(dataloader)
+
+    # Added: Mode and epoch info
+    mode = "Train" if train else "Test"
+    print(f"\n[{mode}] Epoch {epoch} - Total steps: {total_steps}")
+
+    # Added: Track averages
+    total_loss = 0.0
+    category_totals = [0.0] * len(output_names)
+
+    for data_step, (
+            tgt,
+            srcs,
+            masks
+    ) in enumerate(dataloader):
+        full_progress = count_steps(epoch, data_step, total_steps, batch_size)
+        writer.add_scalar(f"Time/Data", (time.time() - last_time), full_progress)
+        last_time = time.time()
+
+        ''' Train Forcaster '''
+        if optimizer_g is not None:
+            (
+                category_loss,
+                category_loss_separated,
+            ) = model_g(srcs, tgt, masks, train)
+        else:
+            with torch.no_grad():
+                (
+                    category_loss,
+                    category_loss_separated
+                ) = model_g(srcs, tgt, masks)
+
+        # Added: Accumulate losses for averaging
+        total_loss += category_loss
+        for i in range(len(category_totals)):
+            category_totals[i] += category_loss_separated[i]
+
+        # Added: Print progress every 10 steps
+        if data_step % 10 == 0 or data_step == total_steps - 1:
+            progress_pct = (data_step + 1) / total_steps * 100
+            print(f"  Step {data_step + 1}/{total_steps} ({progress_pct:.1f}%) - Loss: {category_loss:.6f}")
+
+            # Print category losses occasionally
+            if data_step % 50 == 0 and data_step > 0:
+                print(f"    Category losses: {[f'{loss:.4f}' for loss in category_loss_separated]}")
+
+        writer.add_scalar(f"Model/category_loss", category_loss, full_progress)
+        for i, name in enumerate(output_names):
+            writer.add_scalar(f"Model/{name}", category_loss_separated[i], full_progress)
+
+        if optimizer_g is not None:
+            if ((data_step + 1) % accum_iter == 0) or (data_step + 1 == total_steps):
+                optimizer_g.step()
+                optimizer_g.zero_grad()
+
+        writer.add_scalar(f"Time/Compute", (time.time() - last_time), full_progress)
+        last_time = time.time()
+
+    # Added: Print epoch summary
+    avg_loss = total_loss / total_steps
+    avg_categories = [total / total_steps for total in category_totals]
+    print(f"[{mode}] Epoch {epoch} Summary - Avg Loss: {avg_loss:.6f}")
+    print(f"  Category averages: {[f'{name}: {avg:.4f}' for name, avg in zip(output_names, avg_categories)]}")
+
+
+def train(
+        model_g,
+        optimizer_g,
+        train_writer,
+        test_writer,
+        train_dataloader,
+        test_dataloader,
+        start_epoch,
+        epochs,
+        grad_accum,
+        run_directory,
+        output_names,
+        batch_size
+):
+    # Added: Training header
+    print("\n" + "=" * 80)
+    print(f"Starting training for {epochs} epochs")
+    print(f"Batch size: {batch_size}, Gradient accumulation: {grad_accum}")
+    print("=" * 80)
+
+    best_val_loss = float('inf')
+
     # Model Initialization
-    for epoch in range( start_epoch, epochs ):
-        print(f'epoch {epoch}')
+    for epoch in range(start_epoch, epochs):
+        print(f"\n{'=' * 60}")
+        print(f'EPOCH {epoch}/{epochs - 1}')
+        print('=' * 60)
+
+        epoch_start = time.time()
+
+        # Test phase
         execute(
             grad_accum,
             epoch,
@@ -156,76 +251,35 @@ def train(
         test_writer.flush()
         train_writer.flush()
 
+        epoch_time = time.time() - epoch_start
+        print(f"\nEpoch {epoch} completed in {epoch_time:.1f}s")
+
         try:
             if epoch % 10 == 0:
-                torch.save( {
+                save_path = f'{run_directory}/forcaster_checkpoint_{epoch}.pt'
+                torch.save({
                     'epoch': epoch,
                     'model_state_dict': model_g.state_dict(),
                     'optimizer_state_dict': optimizer_g.state_dict(),
-                }, f'{run_directory}/forcaster_checkpoint_{epoch}.pt' )
+                }, save_path)
+                print(f"Checkpoint saved: {save_path}")
 
-            torch.save( {
+            torch.save({
                 'epoch': epoch,
                 'model_state_dict': model_g.state_dict(),
                 'optimizer_state_dict': optimizer_g.state_dict(),
-            }, f'{run_directory}/forcaster_checkpoint_latest.pt' )
+            }, f'{run_directory}/forcaster_checkpoint_latest.pt')
         except Exception as e:
-            print( e )
+            print(e)
             pass
 
-
-def execute(
-    accum_iter,
-    epoch,
-    model_g: "ModelTrainer",
-    dataloader,
-    writer,
-    output_names,
-    batch_size,
-    optimizer_g = None,
-    train = False,
-):
-    last_time = time.time()
-    total_steps = len( dataloader )
-    print( total_steps )
-    for data_step, (
-        tgt,
-        srcs,
-        masks
-    ) in enumerate( dataloader ):
-        full_progress = count_steps( epoch, data_step, total_steps, batch_size )
-        writer.add_scalar( f"Time/Data", (time.time() - last_time), full_progress )
-        last_time = time.time()
-
-        ''' Train Forcaster '''
-        if optimizer_g is not None:
-            (
-                category_loss,
-                category_loss_separated,
-             ) = model_g( srcs, tgt, masks, train )
-        else:
-            with torch.no_grad():
-                (
-                    category_loss,
-                    category_loss_separated
-                ) = model_g( srcs, tgt, masks )
-
-        writer.add_scalar( f"Model/category_loss", category_loss, full_progress )
-        for i, name in enumerate( output_names ):
-            writer.add_scalar( f"Model/{name}", category_loss_separated[i], full_progress )
-
-        if optimizer_g is not None:
-            if ((data_step + 1) % accum_iter == 0) or (data_step + 1 == total_steps):
-                optimizer_g.step()
-                optimizer_g.zero_grad()
-
-        writer.add_scalar( f"Time/Compute", (time.time() - last_time), full_progress )
-        last_time = time.time()
-
+    # Added: Training complete message
+    print("\n" + "=" * 80)
+    print(f"Training completed! Total epochs: {epochs - start_epoch}")
+    print("=" * 80)
 
 def count_steps( epoch: int, batch_num, num_batches, batch_size ):
     return (epoch * num_batches + batch_num) * batch_size
-
 
 if __name__ == '__main__':
     main()
