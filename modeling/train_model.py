@@ -1,10 +1,9 @@
-
 import torch
 
 from data.events_loader import EventsLoader
 
 torch.set_float32_matmul_precision('high')
-torch.set_default_dtype( torch.bfloat16 )
+torch.set_default_dtype(torch.float32)
 
 import time
 from datetime import datetime
@@ -19,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 base_path = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_config(config_path = f'{base_path}/training_config.json' ):
+def load_config(config_path=f'{base_path}/training_config.json'):
     with open(config_path, 'r') as f:
         import json
         config = json.load(f)
@@ -30,57 +29,56 @@ def simple_collate(x):
 
 def main():
     config = load_config()
-    print( config )
+    print(config)
     full_dataset = EventsLoader(
-        batch_size = config['batch_size'],
-        src_seq_length = config[ 'src_seq_len' ],
-        tgt_seq_length = config[ 'tgt_seq_len' ],
-        id_category_size = config['id_category_size'],
+        batch_size=config['batch_size'],
+        src_seq_length=config['src_seq_len'],
+        tgt_seq_length=config['tgt_seq_len'],
+        id_category_size=config['id_category_size'],
         input_size=config['model']['d_model'],
         output_size=config['id_category_size'],
     )
-    print( full_dataset.category_fields.values() )
+    print(full_dataset.category_fields.values())
     output_names = full_dataset.category_fields.keys()
     model_g = ModelTrainer(
-        d_input = full_dataset.input_size,
-        d_categories = list( full_dataset.category_fields.values() ),
-        d_output = full_dataset.output_size,
-        d_model = config['model']['d_model'],
-        n_heads = config['model']['num_heads'],
-        encoder_layers = config['model']['encoder_layers'],
-        decoder_layers = config['model']['decoder_layers'],
-        encoders = full_dataset.encoder_streams
+        d_input=full_dataset.input_size,
+        d_categories=list(full_dataset.category_fields.values()),
+        d_output=full_dataset.output_size,
+        d_model=config['model']['d_model'],
+        n_heads=config['model']['num_heads'],
+        encoder_layers=config['model']['encoder_layers'],
+        decoder_layers=config['model']['decoder_layers'],
+        encoders=full_dataset.encoder_streams
     )
 
     start_epoch = 0
     if config['model_checkpoint'] is not None:
         model_loaded = torch.load(
             config['model_checkpoint'],
-            weights_only = False,
-            map_location = torch.device('cpu')
+            weights_only=False,
+            map_location=torch.device('cpu')
         )
         model_g.load_state_dict(
-            model_loaded[ 'model_state_dict' ],
+            model_loaded['model_state_dict'],
         )
         start_epoch = model_loaded['epoch']
 
-    #model_g = model_g.to( 'cuda', dtype = torch.bfloat16 )
+    # model_g = model_g.to( 'cuda', dtype = torch.bfloat16 )
     device = torch.device('cpu')
     model_g = model_g.to(device)
 
     # Better convergence
     optimizer_g = torch.optim.Adam(
         model_g.parameters(),
-        lr=1e-4  # Instead of 3e-4
+        lr=1e-5  # Instead of 3e-4
     )
 
     model_g.train()
-    #full_dataset.load_dataset()
-    training_data, test_data = torch.utils.data.random_split( full_dataset, [ 0.9, 0.1 ] )
-    torch.set_default_dtype(torch.float32)  # Instead of torch.bfloat16
+    # full_dataset.load_dataset()
+    training_data, test_data = torch.utils.data.random_split(full_dataset, [0.9, 0.1])
 
     train_dataloader = DataLoader(
-        full_dataset,
+        training_data,  # Changed from full_dataset to training_data
         num_workers=0,  # Instead of 12
         batch_size=1,
         shuffle=False,
@@ -101,8 +99,8 @@ def main():
 
     current_datetime = datetime.now()
     run_directory = f'/runs/{current_datetime.strftime("%Y-%m-%d")}/{current_datetime.strftime("%H_%M")}'
-    test_writer = SummaryWriter( log_dir = f'{run_directory}/test' )
-    train_writer = SummaryWriter( log_dir = f'{run_directory}/train' )
+    test_writer = SummaryWriter(log_dir=f'{run_directory}/test')
+    train_writer = SummaryWriter(log_dir=f'{run_directory}/train')
     train(
         model_g,
         optimizer_g,
@@ -133,11 +131,9 @@ def execute(
     last_time = time.time()
     total_steps = len(dataloader)
 
-    # Added: Mode and epoch info
     mode = "Train" if train else "Test"
     print(f"\n[{mode}] Epoch {epoch} - Total steps: {total_steps}")
 
-    # Added: Track averages
     total_loss = 0.0
     category_totals = [0.0] * len(output_names)
 
@@ -163,17 +159,14 @@ def execute(
                     category_loss_separated
                 ) = model_g(srcs, tgt, masks)
 
-        # Added: Accumulate losses for averaging
         total_loss += category_loss
         for i in range(len(category_totals)):
             category_totals[i] += category_loss_separated[i]
 
-        # Added: Print progress every 10 steps
         if data_step % 10 == 0 or data_step == total_steps - 1:
             progress_pct = (data_step + 1) / total_steps * 100
             print(f"  Step {data_step + 1}/{total_steps} ({progress_pct:.1f}%) - Loss: {category_loss:.6f}")
 
-            # Print category losses occasionally
             if data_step % 50 == 0 and data_step > 0:
                 print(f"    Category losses: {[f'{loss:.4f}' for loss in category_loss_separated]}")
 
@@ -183,17 +176,21 @@ def execute(
 
         if optimizer_g is not None:
             if ((data_step + 1) % accum_iter == 0) or (data_step + 1 == total_steps):
+                # gradient clipping for more stable training
+                torch.nn.utils.clip_grad_norm_(model_g.parameters(), max_norm=1.0)
                 optimizer_g.step()
                 optimizer_g.zero_grad()
 
         writer.add_scalar(f"Time/Compute", (time.time() - last_time), full_progress)
         last_time = time.time()
 
-    # Added: Print epoch summary
     avg_loss = total_loss / total_steps
     avg_categories = [total / total_steps for total in category_totals]
     print(f"[{mode}] Epoch {epoch} Summary - Avg Loss: {avg_loss:.6f}")
     print(f"  Category averages: {[f'{name}: {avg:.4f}' for name, avg in zip(output_names, avg_categories)]}")
+
+    # Function now returns AVG loss
+    return avg_loss
 
 
 def train(
@@ -210,7 +207,15 @@ def train(
         output_names,
         batch_size
 ):
-    # Added: Training header
+
+    #LR scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_g,
+        mode='min',
+        factor=0.5,
+        patience=3,
+    )
+
     print("\n" + "=" * 80)
     print(f"Starting training for {epochs} epochs")
     print(f"Batch size: {batch_size}, Gradient accumulation: {grad_accum}")
@@ -218,7 +223,6 @@ def train(
 
     best_val_loss = float('inf')
 
-    # Model Initialization
     for epoch in range(start_epoch, epochs):
         print(f"\n{'=' * 60}")
         print(f'EPOCH {epoch}/{epochs - 1}')
@@ -226,8 +230,7 @@ def train(
 
         epoch_start = time.time()
 
-        # Test phase
-        execute(
+        val_loss = execute(
             grad_accum,
             epoch,
             model_g,
@@ -236,8 +239,9 @@ def train(
             output_names,
             batch_size
         )
+
         optimizer_g.zero_grad()
-        execute(
+        train_loss = execute(
             grad_accum,
             epoch,
             model_g,
@@ -248,11 +252,27 @@ def train(
             optimizer_g, True
         )
 
+        # UPDATE LEARNING RATE BASED ON VAL LOSS
+        scheduler.step(val_loss)
+
+        # Track best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            print(f"✓ New best validation loss: {val_loss:.6f}")
+            # Save best model
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model_g.state_dict(),
+                'optimizer_state_dict': optimizer_g.state_dict(),
+                'best_val_loss': best_val_loss,
+            }, f'{run_directory}/best_model.pt')
+
         test_writer.flush()
         train_writer.flush()
 
         epoch_time = time.time() - epoch_start
         print(f"\nEpoch {epoch} completed in {epoch_time:.1f}s")
+        print(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
         try:
             if epoch % 10 == 0:
@@ -261,6 +281,8 @@ def train(
                     'epoch': epoch,
                     'model_state_dict': model_g.state_dict(),
                     'optimizer_state_dict': optimizer_g.state_dict(),
+                    'train_loss': train_loss,
+                    'val_loss': val_loss,
                 }, save_path)
                 print(f"Checkpoint saved: {save_path}")
 
@@ -268,6 +290,8 @@ def train(
                 'epoch': epoch,
                 'model_state_dict': model_g.state_dict(),
                 'optimizer_state_dict': optimizer_g.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss,
             }, f'{run_directory}/forcaster_checkpoint_latest.pt')
         except Exception as e:
             print(e)
@@ -276,10 +300,13 @@ def train(
     # Added: Training complete message
     print("\n" + "=" * 80)
     print(f"Training completed! Total epochs: {epochs - start_epoch}")
+    print(f"Best validation loss: {best_val_loss:.6f}")
     print("=" * 80)
 
-def count_steps( epoch: int, batch_num, num_batches, batch_size ):
+
+def count_steps(epoch: int, batch_num, num_batches, batch_size):
     return (epoch * num_batches + batch_num) * batch_size
+
 
 if __name__ == '__main__':
     main()
