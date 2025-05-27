@@ -35,7 +35,7 @@ services:
 * **DataLoader optimization**: Set num_workers=0 to avoid multiprocessing overhead
 * **Memory optimization**: Disabled persistent_workers
 * **Precision adjustment**: Changed from bfloat16 to float32 for CPU compatibility
-* **Learning rate**: Reduced to 1e-4 for stable convergence
+* **Learning rate**: Reduced to 1e-5 for stable convergence
 
 ### Quick Start
 ``` bash

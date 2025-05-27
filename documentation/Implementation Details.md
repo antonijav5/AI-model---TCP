@@ -6,31 +6,24 @@
 3. **EventPredictor**: Transformer decoder with cross-attention to encoded states
 4. **Training Pipeline**: Supports gradient accumulation, checkpointing, and TensorBoard logging
 
-### Model Configuration
-```json
-{
-    "src_seq_len": 50,
-    "tgt_seq_len": 50,
-    "id_category_size": 1000,
-    "epochs": 100,
-    "batch_size": 32,
-    "grad_accum": 2,
-    "model_checkpoint": null,
-    "model": {
-        "d_model": 64,
-        "num_heads": 8,
-        "encoder_layers": 3,
-        "decoder_layers": 3
-    }
-}
-```
-
 ## Technical Decisions
 
-1. **Only last encoder vectors**: Implemented as required, creating an efficient information bottleneck
-2. **Separate encoders**: Allows specialized learning for each entity type
-3. **Mish activation**: Chosen for smoother gradients compared to ReLU
-4. **CPU optimizations**: Removed multiprocessing overhead, adjusted precision
+### Model-Level
+- **Only last encoder vectors**: Implemented as required, creating an efficient information bottleneck and preserving temporal causality
+- **Separate encoders**: Allows specialized learning for each entity type (e.g., Actor, Location, Time), supporting modularity and stream-specific context
+- **Mish activation**: Chosen for smoother gradients and better convergence properties compared to ReLU
+- **Cross-attention between streams**: Enables contextual fusion across different encoded modalities
+- **Multi-loss per category**: Allows fine-grained feedback and better understanding of learning dynamics
+
+### Optimization & Training
+- **Gradient Clipping (`max_norm=1.0`)**: Prevents exploding gradients and stabilizes training across all steps
+- **Learning Rate Scheduler (`ReduceLROnPlateau`)**: Dynamically lowers learning rate when validation loss plateaus — boosting convergence without overfitting
+- **No multiprocessing in DataLoader**: Simplifies environment setup and reduces CPU thread contention when running in containerized/Docker environments
+- **Precision control**: Set `torch.set_default_dtype(torch.float32)` and `set_float32_matmul_precision('high')` to stabilize computations during training
+
+### Infrastructure
+- **Checkpointing system**: Saves best model and latest model separately, ensuring safe recovery and reproducibility
+- **TensorBoard logging**: Enables detailed tracking of total loss, per-category loss, and timing stats for both training and validation
 
 ## Challenges & Solutions
 
