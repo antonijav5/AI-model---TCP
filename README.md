@@ -1,31 +1,51 @@
 
+# PyTorch Event Stream Prediction Model
+### Overview
+This repository contains my implementation of a transformer-based event stream prediction model for the PyTorch Model Challenge. The model processes multiple event streams (Employee, Location, Cost Code, etc.) to predict future events by learning entity state representations.
+### Architecture Highlights
 
-# Intro
-Your challenge is to build this model architecture.
-When you are done you should be able to explain some of what you learned and the intent.
+* Multiple transformer encoders for different event types
+* Cross-attention mechanism between encoded states and target sequences
+* Event-specific embeddings with positional encoding
+* Efficient last-vector-only approach as per requirements
+* Scalable design supporting various event categories
 
-## General Parameters
-- Must be trainable by starting the docker containers.
-- Demonstrate your understanding of pytorch and model construction.
+### **Local Setup Modifications**
+#### **Docker Configuration Changes**
+The original setup was modified for local CPU training with the following key changes in docker-compose.yml:
+
+* Added TensorBoard as a separate service for real-time monitoring
+* IPC host mode enabled for better inter-process communication
+* GPU configuration commented out for CPU-only training
+* Shared volume (training_runs) between training and TensorBoard services
+``` bash
+services:
+  model_tensorboard:
+    container_name: model_tensorboard
+    command: tensorboard --logdir /runs --host 0.0.0.0
+    ports:
+      - "6006:6006"
+  
+  model_training:
+    container_name: model_training
+    command: python -m modeling.train_model
+    ipc: host  # Improved performance for CPU training
+```
+### Code Modifications for CPU Training
+
+* **DataLoader optimization**: Set num_workers=0 to avoid multiprocessing overhead
+* **Memory optimization**: Disabled persistent_workers
+* **Precision adjustment**: Changed from bfloat16 to float32 for CPU compatibility
+* **Learning rate**: Reduced to 1e-5 for stable convergence
+
+### Quick Start
+``` bash
+# Build and run both services
+docker-compose up --build
+
+# Access TensorBoard at http://localhost:6006
+# Training logs are automatically available in TensorBoard
+```
 
 ![ModelArchitecture.png](ModelArchitecture.png)
 
-### Additional Guidance
-- The encoders layer on the diagram should be transformer encoders.
-- Only the last vector may be passed from each encoder to the cross-attention.
-
----
-## On Completion Questions
-These are questions for you to answer, not to build.
-
-### What is the meaning of the outputs from the encoder streams?
-
-### What are some improvements you may make to this model?
-
-### How would you conduct a beam search using this model? How would the model need to change?
-
-### Why would you conduct a beam search?
-
-### How would you convert this model's decoder layer into a diffusion model?
-
-### How would this model behave differently if this is a diffusion model?
