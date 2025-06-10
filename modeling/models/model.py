@@ -163,10 +163,10 @@ class ModelTrainer(nn.Module):
             )
 
             for i, prediction in enumerate(predictions):
-                # -inf for logits that we know cannot be chosen
-                prediction = prediction + masks[i]
+                 prediction = prediction + masks[i].to(prediction.device)
 
-                category_expected = tgt_events[:, 1:, i].reshape(-1).to(dtype=torch.long)
+                category_expected = tgt_events[:, 1:, i].reshape(-1).to(dtype=torch.long, device=prediction.device)
+
                 category_loss = torch.nn.functional.cross_entropy(
                     prediction.reshape(-1, prediction.shape[-1]),
                     category_expected
@@ -175,11 +175,6 @@ class ModelTrainer(nn.Module):
                 if i not in per_category_loss:
                     per_category_loss[i] = 0.0
                 per_category_loss[i] += category_loss.item()
-
-            mini_batch_loss = torch.mean(torch.stack(category_losses))
-            if run_backward:
-                mini_batch_loss.backward()
-            loss_sum += mini_batch_loss.item()
 
         return (
             loss_sum / len(batch_tgt_events),

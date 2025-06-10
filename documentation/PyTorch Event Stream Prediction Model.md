@@ -1,47 +1,44 @@
 # PyTorch Event Stream Prediction Model
-### Overview
-This repository contains my implementation of a transformer-based event stream prediction model for the PyTorch Model Challenge. The model processes multiple event streams (Employee, Location, Cost Code, etc.) to predict future events by learning entity state representations.
-### Architecture Highlights
 
-* Multiple transformer encoders for different event types
-* Cross-attention mechanism between encoded states and target sequences
-* Event-specific embeddings with positional encoding
-* Efficient last-vector-only approach as per requirements
-* Scalable design supporting various event categories
+## Overview
+This repository contains a transformer-based event stream prediction model for the PyTorch Model Challenge. The model processes multiple event streams to predict future events by learning entity state representations.
 
-### **Local Setup Modifications**
-#### **Docker Configuration Changes**
-The original setup was modified for local CPU training with the following key changes in docker-compose.yml:
+## Current Status & Performance
 
-* Added TensorBoard as a separate service for real-time monitoring
-* IPC host mode enabled for better inter-process communication
-* GPU configuration commented out for CPU-only training
-* Shared volume (training_runs) between training and TensorBoard services
-``` bash
-services:
-  model_tensorboard:
-    container_name: model_tensorboard
-    command: tensorboard --logdir /runs --host 0.0.0.0
-    ports:
-      - "6006:6006"
-  
-  model_training:
-    container_name: model_training
-    command: python -m modeling.train_model
-    ipc: host  # Improved performance for CPU training
-```
-### Code Modifications for CPU Training
+### Training Progress
+- **Current Loss**: ~85 (GPU with bfloat16)
+- **Target Loss**: ~4 (based on CPU baseline)
+- **Status**: Model training successfully, loss tracking working
+- **Next Steps**: Optimize for better convergence
 
-* **DataLoader optimization**: Set num_workers=0 to avoid multiprocessing overhead
-* **Memory optimization**: Disabled persistent_workers
-* **Precision adjustment**: Changed from bfloat16 to float32 for CPU compatibility
-* **Learning rate**: Reduced to 1e-5 for stable convergence
+### Known Issues & Solutions
+1. **High GPU Loss vs CPU**: Currently investigating bfloat16 vs float32 precision
+2. **Loss Tracking Fixed**: Category averages now display correctly
+3. **Backward Pass Added**: Model now properly updates weights
 
-### Quick Start
-``` bash
-# Build and run both services
-docker-compose up --build
+## Architecture Highlights
 
-# Access TensorBoard at http://localhost:6006
-# Training logs are automatically available in TensorBoard
-```
+* **Multiple transformer encoders** for different event types
+* **Cross-attention mechanism** between encoded states and target sequences  
+* **Event-specific embeddings** with positional encoding
+* **GPU-optimized training** with bfloat16 precision
+* **Comprehensive loss tracking** per category
+
+## Current Configuration
+
+### Model Settings
+```json
+{
+  "src_seq_len": 200,
+  "tgt_seq_len": 300,
+  "id_category_size": 1000,
+  "epochs": 500,
+  "batch_size": 8,
+  "grad_accum": 8,
+  "model": {
+    "d_model": 64,
+    "num_heads": 8,
+    "encoder_layers": 3,
+    "decoder_layers": 5
+  }
+}

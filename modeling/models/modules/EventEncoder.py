@@ -40,6 +40,9 @@ class EventEncoder(nn.Module):
         Args:
             events: [batch_size, seq_len] or [batch_size, seq_len, d_categories]
         """
+        events = events.to(self.category_embedding.weight.device)
+
+        embedded_events = self.category_embedding(events)
         # Check dimensions of input
         if events.dim() == 2:
             # Handle 2D input - assuming it's a single category

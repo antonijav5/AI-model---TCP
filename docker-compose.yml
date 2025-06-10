@@ -3,15 +3,11 @@ version: "3.3"
 services:
   model_tensorboard:
     container_name: model_tensorboard
-    #command: tensorboard --logdir /runs --bind_all
-    command: tensorboard --logdir /runs --host 0.0.0.0
+    command: tensorboard --logdir /runs --bind_all
     build:
       context: .
       dockerfile: ./Tensorboard.Dockerfile
-    #network_mode: host
-    ipc: host
-    ports:
-      - "6006:6006"
+    network_mode: host
     environment:
       CONTAINER: tensorboard
     volumes:
@@ -22,19 +18,19 @@ services:
     build:
       context: .
       dockerfile: ./Training.Dockerfile
-    #network_mode: host
-    ipc: host
+    network_mode: host
     environment:
       CONTAINER: training
+#      CUDA_LAUNCH_BLOCKING: 1
     volumes:
       - training_runs:/runs
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            -   driver: nvidia
-#                count: 1
-#                capabilities: [ gpu ]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            -   driver: nvidia
+                count: 1
+                capabilities: [ gpu ]
 
 volumes:
   training_runs:

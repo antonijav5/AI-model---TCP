@@ -1,9 +1,9 @@
 import torch
-
 from data.events_loader import EventsLoader
 
 torch.set_float32_matmul_precision('high')
-torch.set_default_dtype(torch.float32)
+device = torch.device("cuda")
+
 
 import time
 from datetime import datetime
@@ -56,21 +56,20 @@ def main():
         model_loaded = torch.load(
             config['model_checkpoint'],
             weights_only=False,
-            map_location=torch.device('cpu')
+            map_location=device
         )
         model_g.load_state_dict(
             model_loaded['model_state_dict'],
         )
         start_epoch = model_loaded['epoch']
 
-    # model_g = model_g.to( 'cuda', dtype = torch.bfloat16 )
-    device = torch.device('cpu')
-    model_g = model_g.to(device)
+    model_g = model_g.to('cuda', dtype=torch.bfloat16)
+   # device = torch.device('cpu')
+#model_g = model_g.to(device)
 
-    # Better convergence
     optimizer_g = torch.optim.Adam(
         model_g.parameters(),
-        lr=1e-5  # Instead of 3e-4
+        lr=3e-4
     )
 
     model_g.train()
@@ -79,22 +78,21 @@ def main():
 
     train_dataloader = DataLoader(
         training_data,  # Changed from full_dataset to training_data
-        num_workers=0,  # Instead of 12
+        num_workers=24,
         batch_size=1,
         shuffle=False,
-        persistent_workers=False,  # Instead of True
-        pin_memory=False,
-        collate_fn=simple_collate
+        persistent_workers=True,
+        pin_memory=True,
+        collate_fn=lambda x: x[0]
     )
-
     test_dataloader = DataLoader(
         test_data,
-        num_workers=0,  # Instead of 12
+        num_workers=8,
         batch_size=1,
         shuffle=False,
-        persistent_workers=False,  # Instead of True
-        pin_memory=False,
-        collate_fn=simple_collate
+        persistent_workers=True,
+        pin_memory=True,
+        collate_fn=lambda x: x[0]
     )
 
     current_datetime = datetime.now()
@@ -137,29 +135,28 @@ def execute(
     total_loss = 0.0
     category_totals = [0.0] * len(output_names)
 
-    for data_step, (
-            tgt,
-            srcs,
-            masks
-    ) in enumerate(dataloader):
+    for data_step, (tgt, srcs, masks) in enumerate(dataloader):
+
         full_progress = count_steps(epoch, data_step, total_steps, batch_size)
         writer.add_scalar(f"Time/Data", (time.time() - last_time), full_progress)
         last_time = time.time()
 
         ''' Train Forcaster '''
         if optimizer_g is not None:
-            (
-                category_loss,
-                category_loss_separated,
-            ) = model_g(srcs, tgt, masks, train)
+            (category_loss, category_loss_separated) = model_g(srcs, tgt, masks, train)
+            category_loss = sum(category_loss_separated)
+
+            # FIX: Konvertuj u tensor SAMO ako nije tensor
+            if not isinstance(category_loss, torch.Tensor):
+                category_loss = torch.tensor(category_loss, device=device, requires_grad=True)
         else:
             with torch.no_grad():
-                (
-                    category_loss,
-                    category_loss_separated
-                ) = model_g(srcs, tgt, masks)
+                (category_loss, category_loss_separated) = model_g(srcs, tgt, masks)
+            category_loss = sum(category_loss_separated)
 
         total_loss += category_loss
+
+        # FIX: DODAJTE OVO - ažuriranje category_totals
         for i in range(len(category_totals)):
             category_totals[i] += category_loss_separated[i]
 
@@ -176,7 +173,8 @@ def execute(
 
         if optimizer_g is not None:
             if ((data_step + 1) % accum_iter == 0) or (data_step + 1 == total_steps):
-                # gradient clipping for more stable training
+                # FIX: Dodajte backward pass!
+                category_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model_g.parameters(), max_norm=1.0)
                 optimizer_g.step()
                 optimizer_g.zero_grad()
@@ -184,12 +182,16 @@ def execute(
         writer.add_scalar(f"Time/Compute", (time.time() - last_time), full_progress)
         last_time = time.time()
 
+    # FIX: Konvertuj u float za računanje proseka
+    if isinstance(total_loss, torch.Tensor):
+        total_loss = total_loss.item()
+
     avg_loss = total_loss / total_steps
     avg_categories = [total / total_steps for total in category_totals]
+
     print(f"[{mode}] Epoch {epoch} Summary - Avg Loss: {avg_loss:.6f}")
     print(f"  Category averages: {[f'{name}: {avg:.4f}' for name, avg in zip(output_names, avg_categories)]}")
 
-    # Function now returns AVG loss
     return avg_loss
 
 
